@@ -6,6 +6,8 @@
 constexpr uint32_t SECURESENSE_MAGIC = 0x53454E53UL; // SENS
 constexpr uint8_t SECURESENSE_VERSION = 2;
 constexpr uint8_t SECURESENSE_NODE_ID = 2;
+// Stage 8: fixed channel only in hub OFFLINE mode (no WIFI_SSID). With Wi-Fi the hub
+// uses the router's channel and the C3 sweeps 1-13 starting here. Packet layout unchanged.
 constexpr uint8_t SECURESENSE_CHANNEL = 4;
 
 enum PacketType : uint8_t { PK_HELLO=1, PK_STATUS=2, PK_COMMAND=3, PK_ACK=4 };

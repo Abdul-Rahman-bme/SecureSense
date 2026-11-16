@@ -1,0 +1,34 @@
+{
+  "name": "securesense-webapp",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SecureSense dashboard: Fastify backend (auth, MQTT bridge, SQLite history, WebSocket) + React frontend",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "node --watch server/index.js",
+    "dev:web": "vite",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "broker": "node tools/local-broker.mjs",
+    "sim": "node tools/hub-simulator.mjs",
+    "user": "node server/cli/user.js"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.1.5",
+    "@fastify/static": "^10.1.11",
+    "@fastify/websocket": "^11.3.7",
+    "fastify": "^5.12.8",
+    "mqtt": "^5.16.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^6.3.0",
+    "aedes": "^1.2.0",
+    "vite": "^8.3.8"
+  }
+}

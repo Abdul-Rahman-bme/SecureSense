@@ -1,6 +1,9 @@
 /*
  SecureSense ESP32-C3 sensor node.
- Transport: ESP-NOW channel 4, node ID 2; no AP/router/cloud.
+ Transport: ESP-NOW, node ID 2; no AP/router/cloud on the C3 itself.
+ Stage 8: the S3 hub now joins a Wi-Fi router and must use the ROUTER's channel.
+ Whenever the hub link is not live, this node sweeps channels 1-13 (starting at
+ SECURESENSE_CHANNEL) broadcasting HELLO until the hub answers, then stays there.
  Board package: Espressif Arduino-ESP32 3.x (receiver callback API).
  LAB PROTOTYPE ONLY: pairing and command packets are not authenticated.
  GPIO9: hold for 3 seconds during alarm to silence the buzzer only.
@@ -41,11 +44,18 @@ constexpr uint32_t HUB_LOST_TIMEOUT_MS=8000;
 // Bench-only recovery interlocks. Tune from your sensor timing measurements.
 constexpr uint32_t REARM_REED_CLOSED_MS=2000;
 constexpr uint32_t REARM_PIR_CLEAR_MS=10000;
+// Hub discovery channel sweep (Stage 8). A full 1-13 sweep takes ~3.3 s.
+constexpr uint8_t CHANNEL_MIN=1, CHANNEL_MAX=13;
+constexpr uint32_t CHANNEL_SCAN_DWELL_MS=250;
 
 const uint8_t BROADCAST[6]={0xFF,0xFF,0xFF,0xFF,0xFF,0xFF};
 uint8_t hubMac[6]={0};
 bool hubKnown=false;
 bool radioReady=false;
+uint8_t currentChannel=SECURESENSE_CHANNEL;
+uint32_t lastScanStepMs=0;
+bool announcedOnCurrentChannel=false;
+bool hubWasLive=false;
 uint32_t lastHubSeen=0, lastHello=0, lastStatus=0, packetCount=0;
 uint32_t reedEvents=0,pirEvents=0,buttonEvents=0;
 
@@ -121,10 +131,19 @@ bool sendPacket(const uint8_t *dest,SecureSensePacket &p) {
   if(e!=ESP_OK) Serial.printf("ESP-NOW queued-send error=%d\n",(int)e);
   return e==ESP_OK;
 }
-void announce(){
+void announce(bool log=true){
   SecureSensePacket p=fillPacket(PK_HELLO);
   sendPacket(BROADCAST,p);
-  Serial.println("[RADIO] HELLO broadcast (hub discovery)");
+  if(log)Serial.println("[RADIO] HELLO broadcast (hub discovery)");
+}
+bool hubLinkLive(){return hubKnown && (uint32_t)(millis()-lastHubSeen)<HUB_LOST_TIMEOUT_MS;}
+// Peers are registered with channel 0 ("current channel"), so they follow the hop.
+void hopChannel(){
+  currentChannel=currentChannel>=CHANNEL_MAX ? CHANNEL_MIN : currentChannel+1;
+  esp_err_t e=esp_wifi_set_channel(currentChannel,WIFI_SECOND_CHAN_NONE);
+  if(e!=ESP_OK)Serial.printf("[RADIO] set channel %u failed: %s\n",(unsigned)currentChannel,esp_err_to_name(e));
+  if(currentChannel==SECURESENSE_CHANNEL)
+    Serial.printf("[RADIO] Hub not found; sweeping channels %u-%u...\n",(unsigned)CHANNEL_MIN,(unsigned)CHANNEL_MAX);
 }
 void publish(const char *why){
   SecureSensePacket p=fillPacket(PK_STATUS);
@@ -145,7 +164,7 @@ void onRecv(const esp_now_recv_info_t *info,const uint8_t *data,int len) {
 bool addHubPeer(const uint8_t *m){
   if(esp_now_is_peer_exist(m))return true;
   esp_now_peer_info_t peer={}; memcpy(peer.peer_addr,m,6);
-  peer.channel=SECURESENSE_CHANNEL;peer.ifidx=WIFI_IF_STA;peer.encrypt=false;
+  peer.channel=0;peer.ifidx=WIFI_IF_STA;peer.encrypt=false; // 0 = current channel
   esp_err_t e=esp_now_add_peer(&peer);
   if(e!=ESP_OK) Serial.printf("Cannot add HUB peer: %d\n",(int)e);
   return e==ESP_OK;
@@ -416,7 +435,8 @@ void setup(){
   reedChangedMs=buttonChangedMs=millis();
   setLEDs(true,false);
   Serial.println("\n=== SECURESENSE ESP32-C3 NODE ID 2 ===");
-  Serial.printf("GPIO: reed=0 pir=3 green=2 red=8 button=9 buzzer=10 | channel=%u\n",SECURESENSE_CHANNEL);
+  Serial.printf("GPIO: reed=0 pir=3 green=2 red=8 button=9 buzzer=10 | start channel=%u (sweeps %u-%u to find hub)\n",
+    SECURESENSE_CHANNEL,(unsigned)CHANNEL_MIN,(unsigned)CHANNEL_MAX);
   Serial.println("State DISARMED. No alarm will run until S3 sends ARM.");
   Serial.println("GPIO9 LOCAL BUTTON: hold 3s during ALARM to SILENCE (not DISARM).");
   Serial.printf("RESET_REARM: Reed closed >=%lu ms, PIR clear >=%lu ms (if selected).\n",
@@ -458,13 +478,15 @@ void setup(){
   if(err!=ESP_OK){Serial.printf("[FATAL] esp_now_register_recv_cb: %s (%d)\n",esp_err_to_name(err),(int)err);return;}
   esp_now_peer_info_t peer={};
   memcpy(peer.peer_addr,BROADCAST,6);
-  peer.channel=SECURESENSE_CHANNEL;peer.ifidx=WIFI_IF_STA;peer.encrypt=false;
+  peer.channel=0;peer.ifidx=WIFI_IF_STA;peer.encrypt=false; // 0 = current channel
   err=esp_now_add_peer(&peer);
   if(err!=ESP_OK){Serial.printf("[FATAL] broadcast peer: %s (%d)\n",esp_err_to_name(err),(int)err);return;}
   radioReady=true;
+  currentChannel=SECURESENSE_CHANNEL;
   Serial.println("[RADIO] C3 ESP-NOW READY. Discovering S3 hub...");
   lastHello=millis()-HELLO_INTERVAL_MS;
   lastStatus=millis()-STATUS_INTERVAL_MS;
+  lastScanStepMs=millis()-CHANNEL_SCAN_DWELL_MS;
 }
 void loop(){
   scanInputs();
@@ -472,7 +494,26 @@ void loop(){
   updateOutputs();
   if(!radioReady){delay(100);return;} // allow local sensors/outputs, but do not flood ESP-NOW errors
   uint32_t now=millis();
-  if((uint32_t)(now-lastHello)>=HELLO_INTERVAL_MS){lastHello=now;announce();}
+  const bool hubLive=hubLinkLive();
+  if(hubLive!=hubWasLive){
+    hubWasLive=hubLive;
+    if(hubLive)Serial.printf("[RADIO] HUB link live on channel %u\n",(unsigned)currentChannel);
+    else Serial.println("[RADIO] HUB link lost; local alarm continues. Re-scanning channels.");
+  }
+  if(!hubLive){
+    // Discovery: HELLO on this channel, wait one dwell for the hub's ACK, then hop.
+    // The alarm logic above runs every loop regardless of radio state.
+    if((uint32_t)(now-lastScanStepMs)>=CHANNEL_SCAN_DWELL_MS){
+      lastScanStepMs=now;
+      if(announcedOnCurrentChannel)hopChannel();
+      announce(false);
+      announcedOnCurrentChannel=true;
+      lastHello=now;
+    }
+  } else {
+    announcedOnCurrentChannel=false;
+    if((uint32_t)(now-lastHello)>=HELLO_INTERVAL_MS){lastHello=now;announce();}
+  }
   if((uint32_t)(now-lastStatus)>=STATUS_INTERVAL_MS){lastStatus=now;publish("periodic");}
   delay(5);
 }
