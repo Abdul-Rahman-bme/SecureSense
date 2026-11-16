@@ -1,0 +1,8 @@
+# Real Wi-Fi / MQTT credentials — never commit. Copy secrets.example.h instead.
+secrets.h
+
+# Web app
+webapp/node_modules/
+webapp/dist/
+webapp/data/
+webapp/.env

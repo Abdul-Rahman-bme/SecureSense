@@ -1,4 +1,66 @@
-# SecureSense Stage 7 — RESET_REARM (C3 + S3)
+# SecureSense Stage 8 — S3 Wi-Fi + MQTT bridge (C3 + S3)
+
+## Stage 8 scope
+The S3 hub joins a 2.4 GHz router and bridges the C3 node to an MQTT broker, so a backend/web app can show live status and send commands. Packet format is unchanged (protocol **v2**). The C3 alarm logic is unchanged.
+It is still a lab prototype: the ESP-NOW link between C3 and S3 is still unencrypted.
+
+### What changed
+- **S3 hub** (`03_S3_SecureSense_Hub/03_S3_SecureSense_Hub.ino`): Wi-Fi with auto-reconnect, NTP time, and MQTT via the ESP-IDF `esp-mqtt` client that ships with Arduino-ESP32 3.x. **No extra library to install.** MQTT runs in its own task, so a slow broker never blocks ESP-NOW handling.
+- **C3 node** (`02_C3_SecureSense_Node/02_C3_SecureSense_Node.ino`): when it can't hear the hub, the node sweeps channels 1–13 (250 ms per channel, starting at 4), broadcasting HELLO until the hub answers. This is needed because once the S3 is on Wi-Fi it must use the **router's** channel. ESP-NOW peers now use channel `0` ("current channel").
+- **Offline mode**: leave `WIFI_SSID` empty and the hub behaves like Stage 7 (fixed channel 4, Serial only).
+
+### Setup
+1. Sketch folders are named exactly like their `.ino` files, so the Arduino IDE opens them directly (File → Open the `.ino`).
+   In `03_S3_SecureSense_Hub/`, copy `secrets.example.h` to `secrets.h` and fill in the Wi-Fi details, broker URI, hub username/password, topic prefix and broker CA certificate. `secrets.h` is git-ignored.
+2. Flash the S3 first, then the C3. Both need the Stage 8 sketches. (A Stage 7 C3 only works if your router happens to be on channel 4.)
+3. Open the S3 Serial Monitor (115200, Newline). Expected: `[WIFI] Connected ... channel=N`, `[MQTT] Connected`, then `*** C3 NODE 2 DISCOVERED ... on channel N ***`. Type `net` to see the Wi-Fi/MQTT state at any time.
+4. All Stage 7 Serial commands still work alongside MQTT.
+
+### MQTT topics (prefix e.g. `securesense/hub1`)
+| Topic | Dir | Retained | Payload |
+|---|---|---|---|
+| `<p>/hub/online` | hub → | yes | `online` / `offline` (broker Last Will, ~22 s after the hub dies) |
+| `<p>/hub/status` | hub → | yes | JSON: uptime, Wi-Fi RSSI, channel, node MAC/link age, every 30 s |
+| `<p>/node/2/online` | hub → | yes | `online` / `offline` (C3 telemetry younger than 8 s) |
+| `<p>/node/2/status` | hub → | yes | JSON node state, on meaningful change + every 15 s |
+| `<p>/node/2/event` | hub → | no | `ARMED`, `DISARMED`, `ALARM` (+cause), `ALARM_RESET_REARMED`, `SILENCED`, `NODE_REBOOTED` |
+| `<p>/node/2/cmd` | → hub | **never** | `{"id":"abc123","cmd":"arm"}` |
+| `<p>/node/2/cmd_result` | hub → | no | `{"id":"abc123","cmd":"arm","result":"ACCEPTED","armed":true,...}` |
+
+Example status:
+```json
+{"node":2,"seq":812,"uptimeMs":503112,"armed":true,"alarm":false,"silenced":false,"cause":"NONE",
+ "reedEnabled":true,"reedClosed":true,"pirEnabled":true,"pirReady":true,"pirMotion":false,
+ "button":false,"redLed":true,"greenLed":false,"buzzer":false,"rssi":-48,"ts":1763280000}
+```
+`ts` is Unix seconds after NTP sync, otherwise `null`. The backend should still timestamp messages when it receives them.
+
+### Command rules
+- `cmd` can be `ping`, `status`, `arm`, `disarm`, `silence` or `rearm`. LED/buzzer tests stay Serial-only.
+- `id` must be 1–40 characters from `A-Z a-z 0-9 _ -`. It is echoed back in `cmd_result`. Use a fresh id per request. A repeated id (QoS 1 redelivery) is ignored.
+- Each command with a valid id gets **exactly one** result:
+  - a C3 result (`ACCEPTED`, `REED_OPEN`, `PIR_STILL_ACTIVE`, ...)
+  - a hub-side rejection: `HUB_BUSY`, `NODE_OFFLINE`, `HUB_RADIO_DOWN`, `SEND_FAILED`, `INVALID_REQUEST`, `UNSUPPORTED_COMMAND`
+  - or `TIMEOUT_UNKNOWN` after 4 s. This does **not** mean the command failed; check `status`.
+- One command at a time. Retained messages on `/cmd` are ignored, so a stale command can never replay on reconnect.
+
+### Security requirements before leaving the bench
+- Use `mqtts://` with the CA certificate. Plain `mqtt://` is for a private bench network only.
+- Give the hub its own broker user with an ACL limited to its topics (see `secrets.example.h`).
+- **Browsers must not publish to `/cmd`.** The web app's backend authenticates the user, then publishes the command.
+- ESP-NOW encryption/authentication between C3 and S3 is still TODO.
+
+### Web app
+`webapp/` contains the dashboard backend and frontend, plus a hub simulator for testing without hardware. See [webapp/README.md](webapp/README.md).
+
+### Known limitations
+- While the S3's Wi-Fi is disconnected and rescanning, ESP-NOW may drop out briefly. The C3 then loses the hub, re-sweeps channels and relocks. The local alarm on the C3 is unaffected.
+- Events that happen while MQTT is disconnected are not queued. Retained `status` is republished on reconnect, so the current state is always correct.
+- Not compiled against the Arduino-ESP32 3.x core or flashed here. Hardware testing is required.
+
+---
+
+# Stage 7 — RESET_REARM (C3 + S3)
 
 ## Scope
 A single-node, bench-only update to the working Stage 6 SecureSense C3/S3 firmware.
