@@ -11,7 +11,7 @@ constexpr const char* WIFI_PASSWORD = "";
 
 // ---- MQTT broker ----
 // TLS (recommended):   "mqtts://<your-cluster-host>:8883"
-//   e.g. HiveMQ Cloud: "mqtts://xxxxxxxx.s1.eu.hivemq.cloud:8883"
+//   e.g. EMQX Cloud Serverless: "mqtts://xxxxxxxx.ala.<region>.emqxsl.com:8883"
 // Plain, private bench network ONLY (e.g. Mosquitto on your laptop/Pi):
 //   "mqtt://192.168.1.50:1883"
 constexpr const char* MQTT_URI      = "";
@@ -25,9 +25,9 @@ constexpr const char* MQTT_TOPIC_PREFIX = "securesense/hub1";
 
 // ---- Broker CA certificate (required for mqtts://) ----
 // Paste the PEM of the root CA that signed your broker's certificate, including the
-// BEGIN/END lines. For HiveMQ Cloud and most Let's Encrypt-based brokers this is
-// "ISRG Root X1" (download isrgrootx1.pem from letsencrypt.org/certificates).
-// For EMQX Serverless, download the CA file from its console.
+// BEGIN/END lines. For EMQX Cloud Serverless, download the CA certificate offered
+// for your deployment in the EMQX console.
+// (Other brokers: Let's Encrypt-based ones use "ISRG Root X1" from letsencrypt.org/certificates.)
 // Leave as nullptr only when using plain mqtt://.
 constexpr const char* MQTT_CA_CERT = nullptr;
 /* Example:

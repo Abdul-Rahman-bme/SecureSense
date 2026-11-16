@@ -13,7 +13,7 @@ C3 node ─ESP-NOW─ S3 hub ─MQTT/TLS─ broker ─ backend (this) ─WebSock
   - live WebSocket updates
   - an audit log of who sent which command
 - **Frontend** (`web/`): React + Vite. Works on a phone.
-- **Dev tools** (`tools/`): a local MQTT broker and a hub simulator that speaks exactly the Stage 8 firmware topics, so you can work without hardware or HiveMQ.
+- **Dev tools** (`tools/`): a local MQTT broker and a hub simulator that speaks exactly the Stage 8 firmware topics, so you can work without hardware or a cloud broker.
 
 Requires **Node.js 22.13+** (tested on 24).
 
@@ -38,17 +38,17 @@ Edit `.env` and set `BOOTSTRAP_USERNAME` and `BOOTSTRAP_PASSWORD` (at least 10 c
 
 Sign in, press **Arm**, press `d` in the simulator terminal and watch the alarm appear.
 
-## Using the real hub with HiveMQ Cloud
+## Using the real hub with EMQX Cloud
 
-1. In the HiveMQ console → **Access Management**, create a third login just for the backend, e.g. `securesense-web`. Don't reuse the hub's.
+1. In the EMQX console → **Access Control → Authentication**, create a login just for the backend, e.g. `securesense-web`. Don't reuse the hub's. (Topic rules: see the main [README](../README.md#emqx-cloud-setup).)
 2. In `.env`:
    ```ini
-   MQTT_URL=mqtts://<your-cluster-url>:8883
+   MQTT_URL=mqtts://<your-deployment-host>:8883
    MQTT_USERNAME=securesense-web
    MQTT_PASSWORD=...
    MQTT_TOPIC_PREFIX=securesense/hub1   # must match secrets.h on the S3
    ```
-   Node already trusts HiveMQ's certificate, so no CA file is needed here.
+   Node already trusts EMQX Cloud's certificate, so no CA file is needed here (the S3 still needs the CA in `secrets.h`).
 3. Don't run `broker` or `sim`. Just `npm run dev:server` and `npm run dev:web`.
 
 ### Using the local broker with the real S3 instead (bench only, no TLS)
@@ -64,7 +64,7 @@ In `secrets.h`, use `MQTT_URI "mqtt://<this-PC's-IP>:1883"` and set `MQTT_CA_CER
 npm run build     # builds the frontend into dist/
 npm start         # serves the app + API on http://127.0.0.1:3000
 ```
-To open it from your phone on the same Wi-Fi, set `HOST=0.0.0.0` and browse to `http://<PC-IP>:3000`. That's plain HTTP, so bench use only. Before putting it on the internet, put it behind HTTPS (for example a Caddy reverse proxy or Cloudflare Tunnel) and set `COOKIE_SECURE=true`.
+To open it from your phone on the same Wi-Fi, set `HOST=0.0.0.0` and browse to `http://<PC-IP>:3000`. That's plain HTTP, so bench use only. For private HTTPS access from your phone anywhere, use Tailscale Serve as described in the main [README](../README.md#private-phone-access-without-a-paid-host), and set `COOKIE_SECURE=true`.
 
 ## Users
 ```bash
@@ -95,5 +95,5 @@ npm run user -- list
 
 ## Not done yet
 - Push notifications when an alarm fires (PWA + Web Push)
-- HTTPS deployment
+- Always-on hosting (today the backend runs on a PC; see the main README for Tailscale access)
 - Multiple hubs/nodes

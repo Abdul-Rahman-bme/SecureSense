@@ -15,7 +15,7 @@ export const config = {
   port: Number(env.PORT ?? 3000),
 
   // Broker. Local dev default = `npm run broker` (aedes on 1883).
-  // HiveMQ Cloud: mqtts://<cluster-url>:8883 (Node trusts its Let's Encrypt CA by default).
+  // EMQX Cloud: mqtts://<deployment-host>:8883 (Node trusts its public CA by default).
   mqttUrl: env.MQTT_URL ?? 'mqtt://127.0.0.1:1883',
   mqttUsername: env.MQTT_USERNAME || undefined,
   mqttPassword: env.MQTT_PASSWORD || undefined,
