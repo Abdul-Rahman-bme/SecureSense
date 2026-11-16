@@ -1,0 +1,46 @@
+# SecureSense: one-origin Fastify + React + MQTT dashboard on Render.
+# NOTE: PAID Render Starter plan + persistent disk. Requires explicit billing approval.
+# NEVER put Wi-Fi credentials, MQTT passwords, or local .env content in this file.
+services:
+  - type: web
+    name: securesense-dashboard
+    runtime: node
+    region: singapore
+    plan: starter
+    rootDir: webapp
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    autoDeployTrigger: commit
+    disk:
+      name: securesense-sqlite
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "24.22.1"
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: TRUST_PROXY
+        value: "true"
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: DB_PATH
+        value: /var/data/securesense.db
+      - key: SESSION_DAYS
+        value: "7"
+      - key: MQTT_URL
+        value: mqtts://oea629d2.ala.asia-southeast1.emqxsl.com:8883
+      - key: MQTT_TOPIC_PREFIX
+        value: securesense/hub1
+      - key: NODE_ID
+        value: "2"
+      - key: MQTT_USERNAME
+        value: securesense-web
+      - key: MQTT_PASSWORD
+        sync: false
+      - key: BOOTSTRAP_USERNAME
+        sync: false
+      - key: BOOTSTRAP_PASSWORD
+        sync: false
