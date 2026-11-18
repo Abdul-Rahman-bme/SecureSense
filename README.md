@@ -64,16 +64,6 @@ The repository can also be accompanied by the project's enclosure visuals. The i
 docs/images/
 ```
 
-## SecureSense sensor node enclosure
-
-The sensor-node concept shows the enclosure, PCB arrangement, external controls, sensor openings, and the proposed two-part enclosure construction.
-
-![SecureSense Sensor Node Enclosure](docs/images/securesense_sensor_node_enclosure.png)
-
-A larger concept sheet is also included:
-
-![SecureSense Sensor Node Concept](docs/images/securesense_sensor_node_concept.png)
-
 ## SecureSense main hub enclosure
 
 The following renders show the main ESP32-S3 hub enclosure.
@@ -87,10 +77,6 @@ The following renders show the main ESP32-S3 hub enclosure.
 ### Top view
 
 ![SecureSense Main Hub Top View](docs/images/securesense_main_hub_enclosure_top.png)
-
-### USB / rear-side view
-
-![SecureSense Main Hub USB Side](docs/images/securesense_main_hub_enclosure_usb_side.png)
 
 ---
 
