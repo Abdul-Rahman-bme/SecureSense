@@ -1117,23 +1117,100 @@ npm run user -- passwd admin
 
 ---
 
-# 33. Optional Render deployment
+# 33. Free cloud hosting (Render + Neon)
 
-The repository contains:
+The dashboard can run online for free, with no laptop left on and no credit card:
 
-```text
-render.yaml
-```
+| Part | Service | Free plan |
+|---|---|---|
+| Web app (Fastify + React, HTTPS) | [Render](https://render.com) Free web service | Sleeps after 15 min without visitors; 750 hours/month |
+| Database (users, sessions, events, command log) | [Neon](https://neon.com) Free Postgres | Permanent; 1 GB storage; pauses itself when idle |
+| MQTT broker | EMQX Cloud (already set up) | Unchanged |
 
-Render deployment is optional.
+A free Render service has no permanent disk, so the app uses Postgres instead of the SQLite file when `DATABASE_URL` is set. Locally nothing changes: without `DATABASE_URL` it still uses SQLite.
 
-It is not required for local operation.
+`render.yaml` in the repository root describes the whole service. Secrets are **not** in that file; Render asks for them.
 
-If a new user deploys their own copy, they should review deployment-specific values and replace project-specific MQTT settings with their own deployment values.
+### Step 1 — Create the database (Neon)
 
-Do not put MQTT or dashboard passwords directly into a public configuration file. Use the deployment platform's secret/environment-variable mechanism.
+1. Sign up at [neon.com](https://neon.com) (GitHub login works; free plan, no card).
+2. Create a project, e.g. `securesense`. Region: **AWS Asia Pacific (Singapore)**, close to Render's Singapore region and the EMQX deployment.
+3. On the project dashboard press **Connect** and copy the connection string. It looks like `postgresql://user:password@ep-xxxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require`.
 
-For a university demonstration, local operation is generally simpler.
+**Treat this string like a password.** Do not commit it or paste it into chats or screenshots.
+
+The tables are created automatically the first time the app starts.
+
+### Step 2 — Create the web service (Render)
+
+1. Sign up at [render.com](https://render.com) with GitHub.
+2. Choose **New → Blueprint** and select this repository and the `main` branch. Render reads `render.yaml`.
+3. Enter the secret values when asked:
+
+   | Variable | Value |
+   |---|---|
+   | `MQTT_PASSWORD` | The EMQX password of the `securesense-web` user |
+   | `DATABASE_URL` | The Neon connection string from Step 1 |
+   | `BOOTSTRAP_USERNAME` | The first dashboard login name, e.g. `admin` |
+   | `BOOTSTRAP_PASSWORD` | A **new** strong password, at least 10 characters |
+
+4. Apply. The first build takes a few minutes.
+5. Open the URL Render shows, e.g. `https://securesense-dashboard.onrender.com`, and sign in.
+6. Check that the **Broker**, **Hub** and **Node** indicators turn online, then test **Arm** and **Disarm**.
+7. Once you can sign in, delete `BOOTSTRAP_PASSWORD` in Render → **Environment**. The account is already stored in Neon.
+
+Every push to `main` redeploys automatically.
+
+If you use your own EMQX deployment, change `MQTT_URL` in `render.yaml` (or in Render → **Environment**) to your broker address.
+
+### Step 3 — Keep it awake (recommended)
+
+A free Render service **sleeps after 15 minutes without visitors**. The first visit after that takes about a minute.
+
+While it sleeps, the backend is not connected to MQTT:
+
+- Events from that time are **not saved** to the history.
+- The C3 alarm itself still works, because it never depends on the cloud.
+- The current status still appears as soon as the app wakes, because the hub's status messages are retained by the broker.
+
+To keep it awake, create a free monitor at [UptimeRobot](https://uptimerobot.com) or [cron-job.org](https://cron-job.org):
+
+- **URL:** `https://<your-app>.onrender.com/healthz`
+- **Interval:** every 10 minutes
+
+One always-on service fits within Render's 750 free hours per month. Free-tier rules can change, so check Render's [free plan page](https://render.com/docs/free) occasionally.
+
+### Managing dashboard users in the cloud
+
+The `npm run user` commands work against Neon too.
+
+1. On your PC, temporarily add the Neon string to `webapp/.env`:
+
+   ```ini
+   DATABASE_URL=postgresql://...
+   ```
+
+2. From `webapp/`, run:
+
+   ```bash
+   npm run user -- add <name>
+   npm run user -- passwd <name>
+   npm run user -- list
+   ```
+
+   The first line of output shows which database is in use, e.g. `(Postgres ep-xxxx...)`.
+
+3. **Remove the line again afterwards.** While `DATABASE_URL` is in `.env`, your local server also uses the cloud database.
+
+### Security notes for public hosting
+
+- The dashboard is now reachable by anyone on the internet who knows the URL. Only the login protects arming and disarming, so use **long, unique passwords**.
+- Login attempts are limited to 5 failures per 15 minutes per address and username.
+- HTTPS and secure cookies are on (`COOKIE_SECURE=true`, `TRUST_PROXY=true` in `render.yaml`).
+- The browser never receives MQTT or database credentials; only the server holds them.
+- This is still a **lab prototype**. See [Section 34](#34-current-architecture-limitation) and the limitations in `Setup/README.md`.
+
+Local operation (`start-securesense-local.cmd`) keeps working exactly as before.
 
 ---
 

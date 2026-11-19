@@ -40,7 +40,7 @@ Sign in, press **Arm**, press `d` in the simulator terminal and watch the alarm 
 
 ## Using the real hub with EMQX Cloud
 
-1. In the EMQX console → **Access Control → Authentication**, create a login just for the backend, e.g. `securesense-web`. Don't reuse the hub's. (Topic rules: see the main [README](../README.md#emqx-cloud-setup).)
+1. In the EMQX console → **Access Control → Authentication**, create a login just for the backend, e.g. `securesense-web`. Don't reuse the hub's. (Topic rules: see the main [README, section 15](../README.md#15-mqtt-acls).)
 2. In `.env`:
    ```ini
    MQTT_URL=mqtts://<your-deployment-host>:8883
@@ -64,7 +64,11 @@ In `secrets.h`, use `MQTT_URI "mqtt://<this-PC's-IP>:1883"` and set `MQTT_CA_CER
 npm run build     # builds the frontend into dist/
 npm start         # serves the app + API on http://127.0.0.1:3000
 ```
-To open it from your phone on the same Wi-Fi, set `HOST=0.0.0.0` and browse to `http://<PC-IP>:3000`. That's plain HTTP, so bench use only. For private HTTPS access from your phone anywhere, use Tailscale Serve as described in the main [README](../README.md#private-phone-access-without-a-paid-host), and set `COOKIE_SECURE=true`.
+To open it from your phone on the same Wi-Fi, set `HOST=0.0.0.0` and browse to `http://<PC-IP>:3000`. That's plain HTTP, so bench use only. To use it from anywhere, host it for free on Render + Neon as described in the main [README, section 33](../README.md#33-free-cloud-hosting-render--neon).
+
+## Database
+- **Default:** SQLite at `DB_PATH` (`data/securesense.db`), with nothing to set up.
+- **Postgres:** set `DATABASE_URL=postgresql://...` (for example a free Neon database) and the server and `npm run user` use it instead. Tables are created on first start.
 
 ## Users
 ```bash
@@ -95,5 +99,4 @@ npm run user -- list
 
 ## Not done yet
 - Push notifications when an alarm fires (PWA + Web Push)
-- Always-on hosting (today the backend runs on a PC; see the main README for Tailscale access)
 - Multiple hubs/nodes

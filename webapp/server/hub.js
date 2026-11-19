@@ -44,18 +44,14 @@ export function createHubBridge({ config, db, log }) {
   const snapshot = () => structuredClone(state);
   const changed = () => bus.emit('state', snapshot());
 
-  const insertEvent = db.prepare(
-    'INSERT INTO events (received_at, node, type, cause, payload) VALUES (?, ?, ?, ?, ?) RETURNING *');
-  const recentEvents = db.prepare(
-    'SELECT id, received_at, node, type, cause FROM events WHERE id < ? ORDER BY id DESC LIMIT ?');
-  const insertCommand = db.prepare(
-    'INSERT INTO commands (id, user_id, cmd, sent_at) VALUES (?, ?, ?, ?)');
-  const finishCommand = db.prepare(
-    'UPDATE commands SET result = ?, result_at = ?, payload = ? WHERE id = ? AND result IS NULL');
-  const recentCommands = db.prepare(`
-    SELECT c.id, c.cmd, c.sent_at, c.result, c.result_at, u.username
-    FROM commands c LEFT JOIN users u ON u.id = c.user_id
-    ORDER BY c.sent_at DESC LIMIT ?`);
+  // Database calls are async (SQLite locally, Postgres when hosted; see db.js).
+  const insertEvent = (...p) => db.get(
+    'INSERT INTO events (received_at, node, type, cause, payload) VALUES (?, ?, ?, ?, ?) ' +
+    'RETURNING id, received_at, node, type, cause', p);
+  const insertCommand = (...p) => db.run(
+    'INSERT INTO commands (id, user_id, cmd, sent_at) VALUES (?, ?, ?, ?)', p);
+  const finishCommand = (...p) => db.run(
+    'UPDATE commands SET result = ?, result_at = ?, payload = ? WHERE id = ? AND result IS NULL', p);
 
   /** @type {Map<string, {resolve: Function, timer: NodeJS.Timeout}>} */
   const pending = new Map();
@@ -112,9 +108,10 @@ export function createHubBridge({ config, db, log }) {
         if (packet.retain) break; // events are never retained by the hub; ignore stray retained junk
         const j = parseJson(payload);
         if (!j || typeof j.type !== 'string') break;
-        const row = insertEvent.get(now, Number(j.node ?? config.nodeId), j.type.slice(0, 40),
-          typeof j.cause === 'string' ? j.cause.slice(0, 20) : null, JSON.stringify(j));
-        bus.emit('event', { id: row.id, received_at: row.received_at, node: row.node, type: row.type, cause: row.cause });
+        insertEvent(now, Number(j.node ?? config.nodeId), j.type.slice(0, 40),
+          typeof j.cause === 'string' ? j.cause.slice(0, 20) : null, JSON.stringify(j))
+          .then((row) => bus.emit('event', row))
+          .catch((err) => log.error(`[db] could not store ${j.type} event: ${err.message}`));
         break;
       }
       case topics.nodeCmdResult: {
@@ -127,14 +124,16 @@ export function createHubBridge({ config, db, log }) {
   });
 
   function settle(id, result, payload) {
-    const changes = finishCommand.run(result, Date.now(), payload ? JSON.stringify(payload) : null, id).changes;
+    // Answer the waiting request first; the audit-log write must not delay it.
     const p = pending.get(id);
     if (p) {
       clearTimeout(p.timer);
       pending.delete(id);
       p.resolve({ id, result, state: payload ?? null });
     }
-    if (changes) bus.emit('command', { id, result });
+    finishCommand(result, Date.now(), payload ? JSON.stringify(payload) : null, id)
+      .then(({ changes }) => { if (changes) bus.emit('command', { id, result }); })
+      .catch((err) => log.error(`[db] could not record result of command ${id}: ${err.message}`));
   }
 
   /**
@@ -142,13 +141,14 @@ export function createHubBridge({ config, db, log }) {
    * Resolves with {id, result, state}. result is a hub/C3 code, or
    * BROKER_OFFLINE / NO_RESPONSE when the backend never heard back.
    */
-  function sendCommand(cmd, userId) {
-    if (!COMMANDS.includes(cmd)) return Promise.resolve({ id: null, result: 'UNSUPPORTED_COMMAND', state: null });
+  async function sendCommand(cmd, userId) {
+    if (!COMMANDS.includes(cmd)) return { id: null, result: 'UNSUPPORTED_COMMAND', state: null };
     const id = randomUUID(); // 36 chars of [0-9a-f-]: matches the hub's id rules
-    insertCommand.run(id, userId ?? null, cmd, Date.now());
+    // Logged before publishing, so the result update below always finds the row.
+    await insertCommand(id, userId ?? null, cmd, Date.now());
     if (!client.connected) {
       settle(id, 'BROKER_OFFLINE', null);
-      return Promise.resolve({ id, result: 'BROKER_OFFLINE', state: null });
+      return { id, result: 'BROKER_OFFLINE', state: null };
     }
     return new Promise((resolve) => {
       const timer = setTimeout(() => settle(id, 'NO_RESPONSE', null), config.commandTimeoutMs);
@@ -164,8 +164,13 @@ export function createHubBridge({ config, db, log }) {
     on: bus.on.bind(bus),
     snapshot,
     sendCommand,
-    events: (limit = 50, beforeId = Number.MAX_SAFE_INTEGER) => recentEvents.all(beforeId, limit),
-    commands: (limit = 50) => recentCommands.all(limit),
+    events: (limit = 50, beforeId = Number.MAX_SAFE_INTEGER) => db.all(
+      'SELECT id, received_at, node, type, cause FROM events WHERE id < ? ORDER BY id DESC LIMIT ?',
+      [beforeId, limit]),
+    commands: (limit = 50) => db.all(`
+      SELECT c.id, c.cmd, c.sent_at, c.result, c.result_at, u.username
+      FROM commands c LEFT JOIN users u ON u.id = c.user_id
+      ORDER BY c.sent_at DESC LIMIT ?`, [limit]),
     close: () => new Promise((r) => client.end(false, {}, r)),
     topics,
   };

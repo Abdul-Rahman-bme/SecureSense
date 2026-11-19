@@ -229,7 +229,7 @@ C:\Projects\SecureSense\
     server\
     web\
   start-securesense-local.cmd
-  render.yaml                       (paid cloud hosting; not required)
+  render.yaml                       (free cloud hosting: Render + Neon; optional)
 ```
 
 **Note:** GitHub does not include your working `secrets.h`, `webapp/.env`, `node_modules`, or local SQLite user database. Their absence from a fresh clone is intentional. Create them in the following steps.
@@ -928,7 +928,7 @@ Add extra ignore patterns for local secret backup files as necessary. If a secre
 - GitHub stores code, public templates and documentation.
 - Your private `.env` and `secrets.h` belong only on your trusted devices/secure backups.
 - EMQX Authentication/Authorization live in the EMQX deployment, **not GitHub**.
-- SQLite user accounts/event history live in your configured `DB_PATH`, **not GitHub**.
+- User accounts/event history live in your configured `DB_PATH` (SQLite), or in Postgres when `DATABASE_URL` is set (cloud hosting), **not GitHub**.
 - S3 and C3 uploaded firmware persist in flash until replaced; they do not need reflashing to start the dashboard on another PC.
 
 ---
@@ -948,7 +948,7 @@ A VPN-based private-access tool such as **Tailscale Serve** can proxy your local
 
 ### Render/GitHub Pages
 
-`render.yaml` currently requests **paid** Render Starter hosting with a persistent disk. If a billing card is required and you don't want to provide one, **do not deploy it**. GitHub Pages alone supports only the static frontend, not the existing SQLite/MQTT/Fastify backend. The source repo can stay on GitHub without paid hosting.
+`render.yaml` deploys the dashboard on Render's **free** plan (no card), with a free **Neon Postgres** database through `DATABASE_URL`, because a free Render service has no permanent disk for SQLite. Step-by-step instructions are in the main [README, section 33](../README.md#33-free-cloud-hosting-render--neon). GitHub Pages alone supports only the static frontend, not the Fastify/MQTT backend.
 
 ### Known prototype security and reliability limits
 

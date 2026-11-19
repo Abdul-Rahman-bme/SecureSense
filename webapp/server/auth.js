@@ -29,22 +29,23 @@ export function validatePasswordPolicy(password) {
 }
 
 // ---- users ----
+// All methods are async (the database may be SQLite or Postgres; see db.js).
 export function createUserStore(db) {
-  const byName = db.prepare('SELECT id, username, password_hash FROM users WHERE username = ?');
-  const insert = db.prepare('INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)');
-  const setPw = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?');
-  const count = db.prepare('SELECT COUNT(*) AS n FROM users');
+  const byName = (username) =>
+    db.get('SELECT id, username, password_hash FROM users WHERE lower(username) = lower(?)', [username]);
   return {
-    find: (username) => byName.get(username),
-    count: () => count.get().n,
+    find: byName,
+    async count() { return Number((await db.get('SELECT COUNT(*) AS n FROM users')).n); },
+    async list() { return db.all('SELECT username, created_at FROM users ORDER BY id'); },
     async create(username, password) {
-      insert.run(username, await hashPassword(password), Date.now());
+      await db.run('INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)',
+        [username, await hashPassword(password), Date.now()]);
     },
     async setPassword(id, password) {
-      setPw.run(await hashPassword(password), id);
+      await db.run('UPDATE users SET password_hash = ? WHERE id = ?', [await hashPassword(password), id]);
     },
     async checkLogin(username, password) {
-      const user = typeof username === 'string' ? byName.get(username) : undefined;
+      const user = typeof username === 'string' ? await byName(username) : undefined;
       const ok = await verifyPassword(String(password ?? ''), user?.password_hash ?? DUMMY_HASH);
       return ok && user ? { id: user.id, username: user.username } : null;
     },
@@ -56,30 +57,29 @@ const sha256 = (s) => createHash('sha256').update(s).digest('hex');
 
 export function createSessionStore(db, { sessionDays }) {
   const ttlMs = sessionDays * 24 * 3600 * 1000;
-  const insert = db.prepare('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)');
-  const lookup = db.prepare(`SELECT u.id, u.username FROM sessions s JOIN users u ON u.id = s.user_id
-                             WHERE s.token_hash = ? AND s.expires_at > ?`);
-  const remove = db.prepare('DELETE FROM sessions WHERE token_hash = ?');
-  const purge = db.prepare('DELETE FROM sessions WHERE expires_at <= ?');
-  const removeForUser = db.prepare('DELETE FROM sessions WHERE user_id = ?');
-  purge.run(Date.now());
   return {
     ttlMs,
-    create(userId) {
+    async purgeExpired() {
+      await db.run('DELETE FROM sessions WHERE expires_at <= ?', [Date.now()]);
+    },
+    async create(userId) {
       const token = randomBytes(32).toString('base64url');
       const now = Date.now();
-      insert.run(sha256(token), userId, now, now + ttlMs);
+      await db.run('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)',
+        [sha256(token), userId, now, now + ttlMs]);
       return token;
     },
-    userFor(token) {
+    async userFor(token) {
       if (!token) return null;
-      return lookup.get(sha256(token), Date.now()) ?? null;
+      const row = await db.get(`SELECT u.id, u.username FROM sessions s JOIN users u ON u.id = s.user_id
+                                WHERE s.token_hash = ? AND s.expires_at > ?`, [sha256(token), Date.now()]);
+      return row ?? null;
     },
-    destroy(token) {
-      if (token) remove.run(sha256(token));
+    async destroy(token) {
+      if (token) await db.run('DELETE FROM sessions WHERE token_hash = ?', [sha256(token)]);
     },
-    destroyAllFor(userId) {
-      removeForUser.run(userId);
+    async destroyAllFor(userId) {
+      await db.run('DELETE FROM sessions WHERE user_id = ?', [userId]);
     },
   };
 }

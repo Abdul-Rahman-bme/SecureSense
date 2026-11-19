@@ -22,6 +22,9 @@ export const config = {
   topicPrefix: (env.MQTT_TOPIC_PREFIX ?? 'securesense/hub1').replace(/\/+$/, ''),
   nodeId: Number(env.NODE_ID ?? 2),
 
+  // Database: SQLite file by default; set DATABASE_URL (postgres://...) to use Postgres instead,
+  // e.g. a free Neon database when the app is hosted somewhere without a permanent disk.
+  databaseUrl: env.DATABASE_URL || undefined,
   dbPath: path.resolve(ROOT, env.DB_PATH ?? 'data/securesense.db'),
 
   // Set true when served over HTTPS so the session cookie is never sent in clear text.

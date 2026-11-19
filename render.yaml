@@ -1,23 +1,24 @@
-# SecureSense: one-origin Fastify + React + MQTT dashboard on Render.
-# NOTE: PAID Render Starter plan + persistent disk. Requires explicit billing approval.
-# NEVER put Wi-Fi credentials, MQTT passwords, or local .env content in this file.
+# SecureSense dashboard on Render's FREE plan (no card needed).
+#   - Web app: Render Free web service (HTTPS included). It sleeps after 15 min without
+#     visitors unless an uptime monitor pings /healthz (see README "Free cloud hosting").
+#   - Database: a free external Postgres (e.g. Neon) via DATABASE_URL, because a free
+#     Render service has no permanent disk (a local SQLite file would be wiped).
+# NEVER put Wi-Fi credentials, MQTT passwords, database URLs or local .env content in this file.
+# Values marked "sync: false" are secrets: Render asks for them when you create the Blueprint.
 services:
   - type: web
     name: securesense-dashboard
     runtime: node
     region: singapore
-    plan: starter
+    plan: free
     rootDir: webapp
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
+    healthCheckPath: /healthz
     autoDeployTrigger: commit
-    disk:
-      name: securesense-sqlite
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: NODE_VERSION
-        value: "24.22.1"
+        value: "24"
       - key: NODE_ENV
         value: production
       - key: HOST
@@ -26,8 +27,6 @@ services:
         value: "true"
       - key: COOKIE_SECURE
         value: "true"
-      - key: DB_PATH
-        value: /var/data/securesense.db
       - key: SESSION_DAYS
         value: "7"
       - key: MQTT_URL
@@ -39,6 +38,8 @@ services:
       - key: MQTT_USERNAME
         value: securesense-web
       - key: MQTT_PASSWORD
+        sync: false
+      - key: DATABASE_URL
         sync: false
       - key: BOOTSTRAP_USERNAME
         sync: false

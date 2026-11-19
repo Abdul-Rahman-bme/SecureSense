@@ -8,7 +8,9 @@ import { openDb } from '../db.js';
 import { createSessionStore, createUserStore, validatePasswordPolicy } from '../auth.js';
 
 const [action, username] = process.argv.slice(2);
-const db = openDb(config.dbPath);
+// Uses the same database as the server: SQLite by default, Postgres if DATABASE_URL is set.
+const db = await openDb(config);
+console.log(`(${db.describe})`);
 const users = createUserStore(db);
 
 async function askPassword() {
@@ -24,11 +26,11 @@ async function askPassword() {
 
 try {
   if (action === 'list') {
-    for (const u of db.prepare('SELECT username, created_at FROM users ORDER BY id').all()) {
-      console.log(`${u.username}\t(created ${new Date(u.created_at).toISOString()})`);
+    for (const u of await users.list()) {
+      console.log(`${u.username}\t(created ${new Date(Number(u.created_at)).toISOString()})`);
     }
   } else if ((action === 'add' || action === 'passwd') && username) {
-    const existing = users.find(username);
+    const existing = await users.find(username);
     if (action === 'add' && existing) throw new Error(`User "${username}" already exists`);
     if (action === 'passwd' && !existing) throw new Error(`No user "${username}"`);
     const pw = await askPassword();
@@ -39,7 +41,7 @@ try {
       console.log(`Created user "${username}".`);
     } else {
       await users.setPassword(existing.id, pw);
-      createSessionStore(db, config).destroyAllFor(existing.id);
+      await createSessionStore(db, config).destroyAllFor(existing.id);
       console.log(`Password changed for "${username}"; existing sessions signed out.`);
     }
   } else {
@@ -50,5 +52,5 @@ try {
   console.error(`Error: ${err.message}`);
   process.exitCode = 1;
 } finally {
-  db.close();
+  await db.close();
 }

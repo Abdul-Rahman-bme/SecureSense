@@ -16,13 +16,19 @@ const app = Fastify({
   trustProxy: process.env.TRUST_PROXY === 'true',
 });
 
-const db = openDb(config.dbPath);
+const db = await openDb(config, app.log);
+app.log.info(`Database: ${db.describe}`);
 const users = createUserStore(db);
 const sessions = createSessionStore(db, config);
 const limiter = createLoginLimiter();
 const hub = createHubBridge({ config, db, log: app.log });
 
-if (users.count() === 0) {
+// Drop expired sessions now and every 6 hours.
+const purgeSessions = () => sessions.purgeExpired().catch((err) => app.log.error(`[db] session purge: ${err.message}`));
+purgeSessions();
+setInterval(purgeSessions, 6 * 3600 * 1000).unref();
+
+if (await users.count() === 0) {
   if (config.bootstrapUsername && config.bootstrapPassword) {
     const problem = validatePasswordPolicy(config.bootstrapPassword);
     if (problem) throw new Error(`BOOTSTRAP_PASSWORD: ${problem}`);
@@ -57,7 +63,7 @@ function currentUser(req) {
   return sessions.userFor(req.cookies[SESSION_COOKIE]);
 }
 async function requireUser(req, reply) {
-  const user = currentUser(req);
+  const user = await currentUser(req);
   if (!user) return reply.code(401).send({ error: 'Not signed in' });
   req.user = user;
 }
@@ -91,17 +97,20 @@ app.post('/api/login', {
     return reply.code(401).send({ error: 'Wrong username or password' });
   }
   limiter.reset(req.ip, username);
-  setSessionCookie(reply, sessions.create(user.id));
+  setSessionCookie(reply, await sessions.create(user.id));
   return { user: { username: user.username } };
 });
 
 app.post('/api/logout', async (req, reply) => {
-  sessions.destroy(req.cookies[SESSION_COOKIE]);
+  await sessions.destroy(req.cookies[SESSION_COOKIE]);
   reply.clearCookie(SESSION_COOKIE, { path: '/' });
   return { ok: true };
 });
 
 app.get('/api/me', { preHandler: requireUser }, async (req) => ({ user: { username: req.user.username } }));
+
+// ---- health check for hosting platforms / uptime monitors (no login, no database) ----
+app.get('/healthz', async () => ({ ok: true }));
 
 // ---- data routes ----
 app.get('/api/state', { preHandler: requireUser }, async () => hub.snapshot());
@@ -117,9 +126,9 @@ app.get('/api/events', {
       },
     },
   },
-}, async (req) => ({ events: hub.events(req.query.limit, req.query.before) }));
+}, async (req) => ({ events: await hub.events(req.query.limit, req.query.before) }));
 
-app.get('/api/commands', { preHandler: requireUser }, async () => ({ commands: hub.commands(50) }));
+app.get('/api/commands', { preHandler: requireUser }, async () => ({ commands: await hub.commands(50) }));
 
 app.post('/api/commands', {
   preHandler: requireUser,
@@ -146,17 +155,38 @@ hub.on('state', (state) => broadcast({ type: 'state', state }));
 hub.on('event', (event) => broadcast({ type: 'event', event }));
 hub.on('command', (command) => broadcast({ type: 'command', command }));
 
-app.get('/ws', { websocket: true }, (socket, req) => {
-  const user = currentUser(req);
+app.get('/ws', { websocket: true }, async (socket, req) => {
+  socket.on('message', () => {}); // client → server messages are not used
+  let user;
+  try {
+    user = await currentUser(req);
+  } catch (err) {
+    req.log.error(`[ws] session check failed: ${err.message}`);
+    socket.close(1011, 'Server error');
+    return;
+  }
   if (!user) { socket.close(4401, 'Not signed in'); return; }
-  sockets.add(socket);
-  socket.send(JSON.stringify({ type: 'snapshot', state: hub.snapshot(), events: hub.events(50) }));
+  if (socket.readyState !== 1) return; // browser left while we were checking
+
   // Re-check the session periodically so a logout elsewhere ends the stream.
   const recheck = setInterval(() => {
-    if (!currentUser(req)) socket.close(4401, 'Session ended');
+    currentUser(req)
+      .then((u) => { if (!u) socket.close(4401, 'Session ended'); })
+      .catch((err) => req.log.warn(`[ws] session re-check failed: ${err.message}`));
   }, 60_000);
   socket.on('close', () => { clearInterval(recheck); sockets.delete(socket); });
-  socket.on('message', () => {}); // client → server messages are not used
+
+  // Subscribe before loading history so no live update is missed in between.
+  sockets.add(socket);
+  let events = [];
+  try {
+    events = await hub.events(50);
+  } catch (err) {
+    req.log.error(`[ws] could not load event history: ${err.message}`);
+  }
+  if (socket.readyState === 1) {
+    socket.send(JSON.stringify({ type: 'snapshot', state: hub.snapshot(), events }));
+  }
 });
 
 // ---- built frontend (npm run build) ----
@@ -173,7 +203,7 @@ if (existsSync(config.distDir)) {
 const shutdown = async () => {
   await app.close();
   await hub.close();
-  db.close();
+  await db.close();
   process.exit(0);
 };
 process.on('SIGINT', shutdown);
